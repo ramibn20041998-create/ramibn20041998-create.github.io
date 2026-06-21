@@ -1,0 +1,89 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // NOTE: This app's primary write path is the Node.js backend using the
+    // Firebase Admin SDK, which always bypasses these rules. These rules
+    // exist as defense-in-depth for the rare cases the client reads/writes
+    // Firestore directly (e.g. real-time listeners for the city map / live
+    // marketplace updates), and to make sure a leaked client config can
+    // never be used to forge balances, ownership, or burn/treasury stats.
+
+    // ---------- Users ----------
+    match /users/{uid} {
+      allow read: if true; // public profile fields power the leaderboard
+      // Balances, admin flags, and ban status must only ever change via the backend.
+      allow write: if false;
+    }
+
+    // ---------- Lands ----------
+    match /lands/{landId} {
+      allow read: if true; // public city map
+      allow write: if false; // ownership/level/balances are backend-only
+    }
+
+    // ---------- Marketplace ----------
+    match /marketplace/{listingId} {
+      allow read: if true;
+      allow write: if false; // listing/sale logic must run through the backend transaction
+    }
+
+    // ---------- Transactions (audit log) ----------
+    match /transactions/{txId} {
+      // Users may read only their own transaction history
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // ---------- Rewards (claim history) ----------
+    match /rewards/{rewardId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // ---------- Pi payment records ----------
+    match /piPayments/{paymentId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // ---------- Settings (exchange rate, reward rates, fees, etc.) ----------
+    match /settings/{docId} {
+      // Public-readable so the frontend can display current prices/rates.
+      // Treasury and cityStats sub-ledgers are intentionally NOT exposed here.
+      allow read: if docId == 'global';
+      allow write: if false;
+
+      match /ledger/{entryId} {
+        allow read: if false;
+        allow write: if false;
+      }
+    }
+
+    // ---------- Burn statistics ----------
+    match /burnStats/{docId} {
+      allow read: if true; // public, for transparency
+      allow write: if false;
+
+      match /history/{entryId} {
+        allow read: if true;
+        allow write: if false;
+      }
+    }
+
+    // ---------- Decorations catalog ----------
+    match /decorations/{decorationId} {
+      allow read: if true;
+      allow write: if false; // catalog managed by admin via backend
+    }
+  }
+}
